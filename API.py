@@ -651,12 +651,12 @@ def plotFeaturesAndR(workingDir, featuresList, modelList):
             # get the location of the tuple
             loc = workingDir + "\\" + numFeatures + "features\\" + model
 
-            # get the tuple
-            # has the form: (bestModel, bestFeatures, bestMAE, bestRSq, bestR, avgMAE, avgRSq, avgR)
-            aTuple = joblib.load(loc) 
+            # get the tuple. Has the form: (modelsList, metricsDict)
+            aTuple = joblib.load(loc)
+            metricsDict = aTuple[1]
 
             # get the average R and round it
-            avgR = round(aTuple[7], 3)
+            avgR = round(statistics.mean(metricsDict['r']), 3)
             # append it to yList
             yList.append(avgR)
 
@@ -679,14 +679,14 @@ def plotFeaturesAndR(workingDir, featuresList, modelList):
 
     ## plot settings
     # make title
-    title = "R value as the amount of features change"
+    title = "R as the number of features change"
     plt.title(title)
     # make a legend and place it below the picture
     plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), shadow=True, ncol=2)
 
     # label the axes
     plt.xlabel("Number of features")
-    plt.ylabel("R value")
+    plt.ylabel("R")
     plt.xticks(rotation=45)
 
     # show the plot
@@ -807,7 +807,7 @@ def makeTrainTestData(xDf, yDf, testSize=0.2, trainSize=None, randomSeed=None):
     return x_train, x_test, y_train, y_test
 
 
-def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True, metricToOptimize='r2'):
+def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True):
     """
     inputs: N - int - the number of times the model should be trained and evaluated.
             xDf - pandas dataframe - the rows represent the data points, the columns represent the features. These
@@ -821,23 +821,9 @@ def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True,
                                       where 'features' is the percentage
             testSize - float - the percentage of the data that should be used for the testing set (if method=='split')
             doSelection - boolean - if true, then do feature selection. Otherwise, do not do feature selection.
-            metricToOptimize - string - either 'mae' or 'r2'.
-    outputs: avgMAE - the average mean absolute error of the model as it is evaluated N times.
-             avgRMSE - the average root mean squared error of the model as it is evaluated N times.
-             avgMAPE - the average mean absolute percentage error of the model as it is evaluated N times.
-             avgRSq - the average R^2 value of the model as it is evaluated N times.
-             avgR - the average R value of the modeled as it is evaluated N times.
-             avgExplainedVar - the average explained variance of the model as it is evaluated N times
-             bestMAE - the mean absolute error of the best model out of the N iterations.
-             bestRMSE - the root mean squared error of the best model out of the N iterations.
-             bestMAPE - the mean absolute percentage error of the best model out of the N iterations.
-             bestRSq - the R^2 of the best model out of the N iterations.
-             bestR - the R of the best model out of the N iterations.
-             bestExplainedVar - the explained variance of the best model
-             bestModel - the trained best model out of the N iterations.
-             featuresUsed - list of the features that were used to train the model (after feature selection if it was done).
-             trainedModelsList - the list of tuples of all 10 trained models and the features each used. Has the form
-                 (model, features used).
+    outputs: modelsList - the list of all 10 trained models.
+             metricsDict - dictionary of the form {mae: [val1, val2,...val10], mape: [###],...}. The index of each model in 
+                 'trainedModelList' matches the index of the values in each list.
              
     NOTE: This assumes the data in xDf has been standardized or normalized before being used in this function.
     
@@ -845,15 +831,10 @@ def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True,
     and it did choose the same features for every fold for my experiments, but it would be better to do this before the cv in case
     different folds chose different features.
     """
-    # initialize the outputs
-    avgMAE = 0.0
-    avgRMSE = 0.0
-    avgMAPE = 0.0
-    avgRSq = 0.0
-    avgR = 0.0
-    avgExplainedVar = 0.0
-    bestRSq = -9999999999.99
-    bestMAE = 9999999999.99
+    
+    # initialize the dictionary that will have contain the evaluation results of all 10 models. 
+    # It will look like {'mae': [val1, val2,..., val10], 'rmse': ...)
+    metricsDict = {'mae': [], 'mape': [], 'rmse': [], 'r': [], 'rSq': [], 'explainedVariance': []}
     
     # get the input features in the correct format
     X = xDf.values
@@ -888,7 +869,7 @@ def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True,
             raise ValueError("The input 'features' is not an integer or a float.")
     
     # initialize list of trained models
-    trainedModelsList = []
+    modelsList = []
     
     # for every fold
     for train_index, test_index in cv.split(X):
@@ -914,7 +895,7 @@ def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True,
         model.fit(xTrain, yTrain)
         
         # add the model to the list
-        trainedModelsList.append(model)
+        modelsList.append(model)
         
         # get predictions
         pred = model.predict(xTest)
@@ -939,73 +920,19 @@ def getBestModel(N, xDf, yDf, emptyModel, paramGrid, features, doSelection=True,
         # find explained variance
         explainedVar = explained_variance_score(yTest, pred)
         trainExplainedVar = explained_variance_score(yTest, pred)
-
-        # add the errors, R Squared, and R values to average values
-        avgMAE += meanAbsoluteError
-        avgRMSE += rootMeanSquaredError
-        avgMAPE += meanAbsPercError
-        avgRSq += rSq
-        avgR += R
-        avgExplainedVar += explainedVar
-
-        # check to see which metric should be optimized
-        if metricToOptimize == 'r2':
-            # check to see if any of these are the best values
-            if (rSq > bestRSq):
-                # record the best value so far
-                bestMAE = meanAbsoluteError
-                bestRMSE = rootMeanSquaredError
-                bestMAPE = meanAbsPercError
-                bestModel = model
-                bestRSq = rSq
-                bestR = R
-                bestExplainedVar = explainedVar
-
-        elif metricToOptimize == 'mae':
-            # check to see if any of these are the best values
-            if (meanAbsoluteError < bestMAE):
-                # record the best value so far
-                bestMAE = meanAbsoluteError
-                bestRMSE = rootMeanSquaredError
-                bestMAPE = meanAbsPercError
-                bestModel = model
-                bestRSq = rSq
-                bestR = R
-                bestExplainedVar = explainedVar
-
-        else:
-            raise ValueError("The input 'metricToOptimize' does not have a valid input. It must be 'r2' or 'mae'.")
-
-    # divide the sums by N to get the averages
-    avgMAE /= N
-    avgRMSE /= N
-    avgMAPE /= N
-    avgRSq /= N
-    avgR /= N
-    avgExplainedVar /= N
-    
-    ## get the features that were selected to train the best model
-    
-    # get all of the feature names and store in a numpy array
-    features = np.asarray(list(xDf))
-   
-
-    # if doing feature selection, return the features that were used 
-    if doSelection:
-        # get a boolean list to say which features were kept
-        boolArray = bestModel.best_estimator_.named_steps['feature selection'].get_support()
-
-        # get a list of which features were kept
-        featuresUsed = np.ndarray.tolist(features[boolArray])
-    
-    # if not doing feature selection, return the features
-    else:
-        featuresUsed = features
+        
+        # add the metrics to metricsDict
+        metricsDict['mae'].append(round(meanAbsoluteError*2000, 3))
+        metricsDict['rmse'].append(round(rootMeanSquaredError*2000, 3))
+        metricsDict['mape'].append(round(meanAbsPercError, 3))
+        metricsDict['rSq'].append(round(rSq, 3))
+        metricsDict['r'].append(round(R, 3))
+        metricsDict['explainedVariance'].append(round(explainedVar, 3))
     
     ## return the results
-    return avgMAE, avgRMSE, avgMAPE, avgRSq, avgR, avgExplainedVar, bestMAE, bestRMSE, bestMAPE, bestRSq, bestR, bestExplainedVar, bestModel, featuresUsed, trainedModelsList
+    return modelsList, metricsDict
 
-def saveMLResults(N, xDf, yDf, modelList, workingDir, numFeatures, doSelection=True, printResults=True, metricToOptimize='r2'):
+def saveMLResults(N, xDf, yDf, modelList, workingDir, numFeatures, doSelection=True):
     """
     inputs: N - int - the number of times the model should be trained and evaluated.
             xDf - pandas dataframe - the rows represent the data points, the columns represent the features. These
@@ -1020,24 +947,14 @@ def saveMLResults(N, xDf, yDf, modelList, workingDir, numFeatures, doSelection=T
            numFeatures - int or float - if int, then use SelectKBest where k='features'. If float, use SelectPercentile 
                                       where 'features' is the percentage
            doSelection - boolean - if true, then do feature selection. Otherwise, do not do feature selection.
-           printResults - boolean - if True, then also print the results. Otherwise, dont print the results
-           metricToOptimize - string - either 'mae' or 'r2'.
+    
     outputs: nothing is returned, but the results are saved at the given location. A tuple is saved of the form
-          (bestModel, bestFeatures, bestMAE, bestRSq, bestR, avgMAE, avgRSq, avgR, bestMSE, bestMAPE, avgMSE, avgMAPE, trainedModelsList). 
+             (modelsList, metricsDict).
+             
              Each value means the following
-             -bestModel - the best model found by 'getBestModel'. Note that this is the trained sklearn model itself
-             -bestFeatures - the chosen features for the best model
-             -bestMAE - the mean absolute error of the best model
-             -bestRSq - the R squared value of the best model
-             -bestRSq - the R value of the best model
-             -avgMAE - the average mean absolute error of the model over the N iterations
-             -avgRSq- the average R squared value of the model over the N iterations
-             -avgRSq- the average R value of the model over the N iterations
-             -bestRMSE - the root mean squared error of the best model
-             -bestMAPE - the mean absolute percentage error of the best model
-             -avgRMSE - the root mean squared error of the best model
-             -avgMAPE - the mean absolute percentage error of the best model
-             -trainedModelsList - list of all 10 trained models.
+             -modelsList - list of all 10 trained models.
+             -metricsDict - dictionary of the form {mae: [val1, val2,...val10], mape: [###],...}. The index of each model in 
+                 'trainedModelList' matches the index of the values in each list.
     """
     # for every entry in the list
     for tup in modelList:
@@ -1046,20 +963,8 @@ def saveMLResults(N, xDf, yDf, modelList, workingDir, numFeatures, doSelection=T
         filename = tup[2]
         
         # get results
-        avgMAE, avgRMSE, avgMAPE, avgRSq, avgR, avgExplainedVar, bestMAE, bestRMSE, bestMAPE, bestRSq, bestR, bestExplainedVar, bestModel, featuresUsed, trainedModelsList = getBestModel(N, xDf, yDf, model, paramGrid,features=numFeatures, doSelection=doSelection, metricToOptimize=metricToOptimize)
+        trainedModelsList, metricsDict = getBestModel(N, xDf, yDf, model, paramGrid,features=numFeatures, doSelection=doSelection)
         
-        # convert MAE from tons to lbs to make results more readable
-        avgMAE = (round(avgMAE*2000, 3))
-        bestMAE = (round(bestMAE*2000, 3))
-        
-        # convert RMSE from tons to lbs
-        avgRMSE = (round(avgRMSE*2000, 3))
-        bestRMSE = (round(bestRMSE*2000, 3))
-        
-        # round MAPE
-        avgMAPE = (round(avgMAPE, 3))
-        bestMAPE = (round(bestMAPE, 3))
-
         # get the save location
         saveLoc = workingDir + "\\" + filename
 
@@ -1068,25 +973,4 @@ def saveMLResults(N, xDf, yDf, modelList, workingDir, numFeatures, doSelection=T
         modelName = filename[:stopIndex]
 
         #save the new model over the old model if the new model has a better R^2 value
-        joblib.dump((bestModel, featuresUsed, bestMAE, bestRSq, bestR, avgMAE, avgRSq, avgR, bestRMSE, bestMAPE, bestExplainedVar, avgRMSE, avgMAPE, avgExplainedVar, trainedModelsList), saveLoc)
-
-        # if 'printResults' is True, then print results
-        if printResults:
-            print("model: ", modelName)
-            print("Avg MAE: ", avgMAE)
-            print("Avg RMSE: ", avgRMSE)
-            print("Avg MAPE: ", avgMAPE)
-            print("Avg R squared: ", round(avgRSq, 3))
-            print("Avg R: ", round(avgR, 3))
-            print("Avg Explained Variance: ", round(avgExplainedVar, 3))
-            print("Best MAE: ", bestMAE)
-            print("Best RMSE: ", bestRMSE)
-            print("Best MAPE: ", bestMAPE)
-            print("Best R squared: ", round(bestRSq, 3))
-            print("Best R: ", round(bestR, 3))
-            print("Best Explained Variance: ", round(bestExplainedVar, 3))
-            print("Parameters of the best model: ", bestModel.best_params_)
-            print("Features used: ", featuresUsed)
-            print(" ")
-
-            
+        joblib.dump((trainedModelsList, metricsDict), saveLoc)
